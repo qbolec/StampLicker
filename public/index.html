@@ -1,0 +1,157 @@
+<!doctype html>
+<html>
+  <head>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/mootools/1.4.5/mootools-core-full-compat-yc.js" type="text/javascript"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/mootools-more/1.4.0.1/mootools-more-yui-compressed.js" type="text/javascript"></script>
+    <script src="mersenne-twister.js" type="text/javascript"></script>
+    <script src="//crypto-js.googlecode.com/svn/tags/3.1.2/build/rollups/sha1.js"></script>
+    <script src="stamplicker.js" type="text/javascript"></script>
+    <link href="//netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap.min.css" rel="stylesheet">
+    <link href="main.css" rel="stylesheet">
+  </head>
+  <body>
+     <div class="container">
+     <img id="logo" src="cat.jpg" alt="cat licking" title="Photo by http://www.flickr.com/photos/emifaulk/">
+         <h1>Stamp Licker</h1>
+         <p class="lead">is an anti-spam solution which requires a client to provide a proof of work on their side before you grant a service.</p>
+         <p>By analogy to snail-mail: we require a user to lick a post stamp and to put it on the envelope, so before you deliver the message, you can verify that the appropriate "payment" (in our case: CPU time) was made.</p>
+         <p>It is based on a javascript implementation of <a href="http://eprint.iacr.org/2005/356.pdf">Hokkaido</a> algorithm, which computes proof of work 
+         in the user's broswer, then sends it for verification to a judge, which then sends back signature, which you can later attach to a form, ajax, or other request you
+         need to send from client to your server</p>
+         <p>This algorithm is memory bound (affected more by memory troughput than CPU speed) which makes it great for javascript -- an attacker might rewrite it in C++ or asembly, gaining just a little speed improvement.</p>
+         <p>We serve a judge running on our servers for your convinience, but we encourage you to install your own instance.</p>
+         <h1>Overview</h1>
+         <p>Following illustration might help understand the process.
+            <img src="scheme.png" id="scheme">
+           A User wants to request a service from your server, such as sending a message to another user.
+           The Server however requires a signature attached to each message -- without such signature a request for service will be refused by Server.
+           Such signatures are provided by Judge, and can not be forged by User, as they are crafted using a secret shared by Judge and Server only.
+           In order to get such signature from the Judge, the User has to perform some work (computations) -- actually it is not the user but his browser, and this whole process does not require a human assistance.
+           These computations are verfied by Judge and only if they are correct, and their ammount is fair enough, the Judge grants the user the signature.
+           So to summarize:
+           <ol>
+             <li>application generates a challenge for the browser
+             <li>browser computes solution to the challenge
+             <li>broswer sends solution to the Judge
+             <li>Judge verifies the solution and exchanges it for signature
+             <li>Judge sends signature to the user
+             <li>User sends the request and the signature to the Server
+             <li>Server verifies the signature
+             <li>Server grants the service to the User
+            </ol>
+         </p>
+
+         <h1>Installation</h1>
+         <p>In general you will need:</p>
+         <ul>
+           <li><a href="stamplicker.js">stamplicker.js</a>
+           <li>libararies providing SHA1 and Mersenne Twister
+           <li>name of your domain (for example "my.example.com")
+           <li>some secret (currently the project is in alpha and this is not supported yet -- the secret is always "blah")
+           <li>a few lines of initialization javascript
+           <li>call our library before user requests service from your server, and request the service only when our library signals that the work has been successfuly performed by client and verified by the judge
+           <li>augment your server so that it only serves the service if the request contains a valid proof of work
+        </ul>
+         <p>You need to include <a href="stamplicker.js">stamplicker.js</a> module and configure it providing global object, jsonp implementation, mersenne twister implementation, and sha1 implementation,  like this:
+         <pre>
+var module=StampsLickerModule(window,function(config){
+  new Request.JSONP({
+    method:config.method,
+    url:config.url,
+    data:config.data,
+    onFailure:config.failure,
+    onSuccess:config.success
+  }).send();
+},MersenneTwister,function(text){return CryptoJS.SHA1(text).words[4]&gt;&gt;&gt;0;});
+         </pre>
+         <p>
+         In the above example we use <a href="http://mootools.net/docs/more/Request/Request.JSONP">Mootools' JSONP</a>,  <a href="https://gist.github.com/banksean/300494">Sean McCullough's Mersenne Twister</a>  and <a href="https://code.google.com/p/crypto-js/#SHA-1">CryptoJS's SHA1</a>,
+         but you should be able to use it with JQuery or Node JS implementations.
+         The global object is used to obtain setTimeout method.
+         </p>
+         <p>
+         Once you have the module, you can spawn a licker configured for your domain -- some heavy computations are needed once for each domain, and their results are stored internally in this object:
+         </p>
+         <pre>
+var domain_licker = new module.DomainStampsLicker({
+  verifier_endpoint:'http://vanisoft.pl:8801/verify', //you can change it to point to your judge if you are running one
+  domain:'my.website.com', //this should match your account in our service, as judge signatures depend on secret you provided for your domain
+  //do not change these numbers unless you've read the paper and the source code
+  n:23, //length in bits of each x, v[i], and w[i], and 2^n is the size of t[]
+  e:23, //2^e is the expected number of trials before we find checksum with e zeros. e must not be smaller than n
+  repetitions:6, //number of stamps to be generated. repetitions*2^e is the workload for client. Too minimize variance of the overall workload keep it larger than 5
+  l:35, //length of the path b[1],..,b[l], and  x[0],...,x[l], suggested to be e+10
+});
+         </pre>
+         <p>
+         Now you are ready to wire our library to your send button:
+         </p>
+<pre>
+$('send').addEvent('click',function(e){
+  e.preventDefault();
+  var stamp_licker = domain_licker.getStampLicker('send/from:john/to:marry' + (+new Date()));
+  stamp_licker.lick({
+    on_success:function(proof){
+      $('form1').hidden_ticket = JSON.encode(proof);
+      $('form1').send();
+    },
+    on_failure:function(err){console.log("An error occured",err);}
+  });
+});
+</pre>
+         <p>Service name provided to <code>getStampLicker(service_name)</code> should be unique -- a proof of work generated will be valid for this particular <code>service_name</code> so unless this is your intention
+         that the same proof can be used over and over again by an attacker to send multiple messages, you should make sure, that your server will be able to tell if specific service was already granted or not.
+         One way to achieve this is to store on your server side a "last seen timestamp" for each user and make sure that you never accept a proof for service which contains timestamp older than that.
+         The above example is a bit simplistic -- it wrongly assumes that clock of user's broswer is in sync with server's clock.
+         At least it makes sure that a proof of work is valid only for the particular sender (john), and operation (sending to marry) which is always a good idea.
+         </p>
+         <p>You might want create a more complicated JS to pre-compute the proof of work before user clicks "send" button, so that there is no latency -- just make sure you handle timestamps/uniqueness of service_name correctly</p>
+
+         <p>Finally, you should augment your server, so that it verifies the proof attached to the form. The proof contains the following fields:
+         <ul>
+           <li>service -- is the service name you provided
+           <li>n -- is the n you provided
+           <li>e -- is the e you provided
+           <li>repetitions -- is the repetitions you provided
+           <li>signature -- is a sha1(service+'|'+n+'|'+e+'|'+repetitions+'|'+domain_secret) where domain_secret is the secret you provided when configuring your domain
+        </ul>
+        You must verify that n, e and repetitions are exactly equal to the parameters you wanted (by default: 23,23,6).
+        You must verify that service was never granted to anyone before.
+        You must verify the signature.
+        So, something like this should be ok:
+        <pre>
+if(array_key_exists('signature',$_POST) &amp;&amp; is_string($_POST['signature'])){
+  $proof= json_decode($_POST['signature'],false);
+  if(is_array($proof) &amp;&amp;     
+     array_key_exists('n',$proof) &amp;&amp; $poof['n']==23 &amp;&amp;
+     array_key_exists('e',$proof) &amp;&amp; $poof['e']==23 &amp;&amp;
+     array_key_exists('repetitions',$proof) &amp;&amp; $poof['repetitions']==6 &amp;&amp;
+     array_key_exists('service',$proof) &amp;&amp; is_string($proof['service']) &amp;&amp;
+     is_expected_service_description($poof['service']) &amp;&amp; 
+     was_not_served_before($proof['service'])) &amp;&amp;
+     array_key_exists('signature',$proof) &amp;&amp; $poof['signature']===sha1("{$proof['service']}|{$proof['n']}|{$proof['e']}|{$proof['repetitions']}|{$secret}")){
+     ///...serve...
+    }
+  }
+}
+</pre>
+         </p>
+         <h1>Advanced stuff</h1>
+         <p>I am still not sure if shared secret (which requires some additional infrastructure such as domain administrator accounts, admin panel, etc.) is a good way to go. 
+         Perhaps an assymetric public key announced by Judge could be used by Server to verify the signature.
+         The drawback is that sha1 is relatively simplier to perform server side in many languages than proper handling of RSA.
+         </p>
+         <p>
+         You may run Judge on your own servers, which makes a lot of sense since my current hosting is not DoS-tolerant :)
+         You may even skip having a Judge from the whole protocol and embed solution directly in the request sent to the Server and teach the Server how to judge a solution.        
+         </p>
+         <h1>Example</h1>
+         <button id="send">Send</button>
+         <pre id="result">
+         press the send button to run example
+         </pre>
+     </div><!-- /.container -->
+
+    <script src="main.js" type="text/javascript"></script>
+  </body>
+</html>
